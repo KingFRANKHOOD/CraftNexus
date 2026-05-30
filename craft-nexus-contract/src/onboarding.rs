@@ -896,7 +896,32 @@ impl OnboardingContract {
             "Username too long"
         );
 
-        // Check if user already onboarded
+        // Check if user already onboarded (#92).
+        //
+        // Reads the `DataKey::UserProfile(user)` persistent entry to determine
+        // whether this address has already completed onboarding.
+        //
+        // Storage side-effect (existing users only): if a profile is found, its
+        // persistent TTL is extended by `TTL_EXTENSION` ledgers before the panic.
+        // This "optimistic TTL refresh on read" pattern ensures that a profile
+        // that is close to expiry is not silently archived on the same ledger that
+        // rejected a duplicate-onboarding attempt — the failure path should never
+        // be a vector for accidentally losing a live record.
+        //
+        // Preconditions:
+        //   - Config must be initialized (checked and extended above).
+        //   - `user.require_auth()` must have passed (enforced at function entry).
+        //
+        // Integration notes for off-chain integrators (#92):
+        //   - Use `get_user(user)` or subscribe to `UserOnboarded` events as the
+        //     preferred way to check onboarding status; avoid probing this storage
+        //     key directly, as TTL expiry can make `has` return `false` for users
+        //     who have not interacted with the contract recently.
+        //   - `onboard_user` panics (no return value) on a duplicate call, so
+        //     client code should guard with a `get_user` probe or catch the error
+        //     via `try_invoke_contract` before calling this function.
+        //   - Profile shape is versioned via `CURRENT_USER_PROFILE_VERSION`; any
+        //     schema change requires a migration via `migrate_user_profile`.
         let existing: Option<UserProfile> = env
             .storage()
             .persistent()
@@ -935,13 +960,34 @@ impl OnboardingContract {
             .set(&DataKey::UserProfile(user.clone()), &profile);
         Self::extend_persistent(&env, &DataKey::UserProfile(user.clone()));
 
-        // Store username → address mapping for uniqueness enforcement
+        // Store username → address mapping for uniqueness enforcement.
+        //
+        // Storage side-effect: writes a `DataKey::Username(normalized)` persistent entry
+        // whose value is the owner's `Address`.  This secondary index is the authoritative
+        // source for username availability checks and is consulted by:
+        //   - `get_user_by_username`  — resolves a handle to a full `UserProfile`
+        //   - `change_username`       — removes the old key and writes a new one atomically
+        //   - the uniqueness guard earlier in this function (`.has` check)
+        //
+        // Preconditions (validated above):
+        //   1. No `DataKey::Username(normalized)` entry exists yet (uniqueness guard passed).
+        //   2. The normalized username satisfies the configured min/max length constraints.
+        //
+        // Integration notes for off-chain indexers (#104):
+        //   - Index the `UserOnboarded` and `UsernameChanged` events to maintain a
+        //     username → address mapping without polling contract storage directly.
+        //   - The key is stored under a `TTL_EXTENSION`-ledger TTL.  Integrators that
+        //     probe storage directly must account for key expiry if `extend_persistent`
+        //     was not called recently (e.g. for dormant accounts).
+        //   - Username normalisation rules: lowercase, separator characters collapsed to
+        //     `_`, leading/trailing separators stripped.  Apply the same rules on the
+        //     client side before constructing a lookup key.
         env.storage()
             .persistent()
             .set(&DataKey::Username(normalized.clone()), &user);
         Self::extend_persistent(&env, &DataKey::Username(normalized.clone()));
 
-        // Emit UserOnboarded event.
+        // Emit UserOnboarded event (#108).
         //
         // Event topic  : `("UserOnboarded",)`
         // Event payload: `UserOnboardedEvent { user, username, role }`
@@ -950,9 +996,29 @@ impl OnboardingContract {
         // * `user`     - The wallet address that was just onboarded.
         // * `username` - The normalized (lowercased, trimmed) username stored on-chain.
         // * `role`     - The role assigned: `Buyer` (1) or `Artisan` (2).
+        //                Numeric discriminants:
+        //                  0 = Admin    (reserved; cannot be self-assigned)
+        //                  1 = Buyer
+        //                  2 = Artisan
+        //                Off-chain consumers should treat any unrecognised discriminant
+        //                as unknown and not silently drop the event.
         //
-        // Off-chain indexers should subscribe to this event to build user registries
-        // and trigger downstream workflows (e.g. welcome emails, dashboard provisioning).
+        // Emitted after all storage writes complete, so subscribers observing this
+        // event can safely query `get_user` and `get_user_by_username` immediately.
+        //
+        // Integration notes for off-chain indexers (#108):
+        //   - Subscribe to topic `"UserOnboarded"` to build a real-time user registry
+        //     without polling `get_user` for every address.
+        //   - The `username` field carries the canonical on-chain form; use it verbatim
+        //     for reverse lookups and display.  Do not re-normalise on the client side
+        //     unless you are constructing a new lookup key (same normalisation rules
+        //     apply: lowercase, separators collapsed to `_`, no leading/trailing `_`).
+        //   - Trigger downstream workflows (welcome emails, dashboard provisioning, etc.)
+        //     only after the event is confirmed in a closed ledger to avoid acting on
+        //     failed transactions.
+        //   - This event is emitted exactly once per address.  A second call to
+        //     `onboard_user` with the same address panics with `AlreadyOnboarded`
+        //     and produces no event.
         env.events().publish(
             (Symbol::new(&env, "UserOnboarded"),),
             UserOnboardedEvent {
@@ -1364,8 +1430,36 @@ impl OnboardingContract {
     }
 
     /// Get activity metrics for a user.
-    /// Returns zeroed metrics if no escrow activity has been recorded yet.
+    ///
+    /// Returns the stored [`UserMetrics`] for `address`, or a zeroed default if no
+    /// escrow activity has been recorded yet.
+    ///
+    /// # Storage side-effects
+    /// When a `UserMetrics` entry already exists for `address`, its persistent TTL is
+    /// extended by `TTL_EXTENSION` ledgers as part of the read.  This prevents the
+    /// metrics key from expiring between the first escrow interaction and the next
+    /// write-back, which would otherwise silently reset accumulated counters.
+    ///
+    /// # Arguments
+    /// * `address` - The user's Stellar wallet address
+    ///
+    /// # Returns
+    /// [`UserMetrics`] with `total_escrow_count` and `total_volume` fields populated,
+    /// or zeroed defaults when no record exists yet.
     pub fn get_user_metrics(env: Env, address: Address) -> UserMetrics {
+        let key = DataKey::UserMetrics(address.clone());
+        let metrics = env
+            .storage()
+            .persistent()
+            .get::<DataKey, UserMetrics>(&key)
+            .unwrap_or(UserMetrics {
+                total_escrow_count: 0,
+                total_volume: 0,
+            });
+        if env.storage().persistent().has(&key) {
+            Self::extend_persistent(&env, &key);
+        }
+        metrics
         Self::read_user_metrics(&env, &address)
     }
 
