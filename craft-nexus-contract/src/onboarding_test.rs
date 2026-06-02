@@ -1107,6 +1107,87 @@ fn test_change_username_preserves_other_fields() {
     assert_eq!(updated.address, user);
     assert_eq!(updated.registered_at, original.registered_at);
 }
+
+#[test]
+#[should_panic]
+fn test_bump_user_profile_ttl_unauthorized() {
+    let env = Env::default();
+
+    // Do NOT call env.mock_all_auths(); we want require_auth() to enforce real auth.
+    let contract_id = env.register_contract(None, OnboardingContract);
+    let client = OnboardingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    // Populate config and a user profile directly as the contract to avoid
+    // needing to run `initialize` (which itself requires auth). This lets us
+    // test that calling `bump_user_profile_ttl` without the proper signer
+    // will be rejected by `require_auth()`.
+    let config = OnboardingConfig {
+        require_username: true,
+        min_username_length: 3,
+        max_username_length: 50,
+        platform_admin: admin.clone(),
+        auto_verify_enabled: true,
+        min_escrow_count_for_verify: 5,
+        min_volume_for_verify: 10_000_000_000,
+        escrow_contract: None,
+    };
+
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(&DataKey::Config, &config);
+        let profile = UserProfile {
+            version: CURRENT_USER_PROFILE_VERSION,
+            address: user.clone(),
+            role: UserRole::Buyer,
+            username: String::from_str(&env, "someone"),
+            registered_at: env.ledger().timestamp(),
+            is_verified: false,
+            successful_trades: 0,
+            disputed_trades: 0,
+            portfolio_cid: None,
+            status: ProfileStatus::Active,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::UserProfile(user.clone()), &profile);
+    });
+
+    // No auth for the caller here — should panic due to require_auth
+    client.bump_user_profile_ttl(&user);
+}
+
+#[test]
+#[should_panic]
+fn test_bump_user_metrics_ttl_unauthorized() {
+    let env = Env::default();
+
+    // Do NOT call env.mock_all_auths(); we want require_auth() to enforce real auth.
+    let contract_id = env.register_contract(None, OnboardingContract);
+    let client = OnboardingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    let config = OnboardingConfig {
+        require_username: true,
+        min_username_length: 3,
+        max_username_length: 50,
+        platform_admin: admin.clone(),
+        auto_verify_enabled: true,
+        min_escrow_count_for_verify: 5,
+        min_volume_for_verify: 10_000_000_000,
+        escrow_contract: None,
+    };
+
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(&DataKey::Config, &config);
+    });
+
+    // No auth for the caller here — should panic due to require_auth
+    client.bump_user_metrics_ttl(&user);
+}
 #[test]
 fn test_volume_normalization_across_decimals() {
     let env = Env::default();
@@ -1360,30 +1441,20 @@ fn test_error_enum_has_specific_variants() {
 #[test]
 fn test_error_enum_backward_compatibility() {
     // Verify that existing error variants maintain their numeric IDs
-    assert_eq!(Error::Unauthorized as u32, 1);
-    assert_eq!(Error::EscrowNotFound as u32, 2);
-    assert_eq!(Error::InvalidEscrowState as u32, 3);
-    assert_eq!(Error::UsernameAlreadyExists as u32, 4);
-    assert_eq!(Error::TokenNotWhitelisted as u32, 5);
-    assert_eq!(Error::AmountBelowMinimum as u32, 6);
-    assert_eq!(Error::ReleaseWindowTooLong as u32, 7);
-    assert_eq!(Error::NotInDispute as u32, 8);
-    assert_eq!(Error::AlreadyOnboarded as u32, 9);
-    assert_eq!(Error::InvalidFee as u32, 10);
-    assert_eq!(Error::SameBuyerSeller as u32, 11);
-    assert_eq!(Error::PlatformNotInitialized as u32, 12);
-    assert_eq!(Error::ReleaseWindowNotElapsed as u32, 13);
-    assert_eq!(Error::BatchOperationFailed as u32, 14);
-    assert_eq!(Error::ContractPaused as u32, 15);
-    assert_eq!(Error::DisputeExpired as u32, 16);
-    assert_eq!(Error::InsufficientStake as u32, 17);
-    assert_eq!(Error::StakeCooldownActive as u32, 18);
-    assert_eq!(Error::InvalidRefundAmount as u32, 19);
-    assert_eq!(Error::ProposalNotFound as u32, 20);
-    assert_eq!(Error::ProposalAlreadyExists as u32, 21);
-    assert_eq!(Error::ReentryDetected as u32, 22);
-    assert_eq!(Error::ReleaseWindowTooShort as u32, 23);
-    assert_eq!(Error::StakeTokenMismatch as u32, 24);
+    assert_eq!(Error::NotInitialized as u32, 1);
+    assert_eq!(Error::UserNotFound as u32, 2);
+    assert_eq!(Error::UsernameTaken as u32, 3);
+    assert_eq!(Error::UsernameTooShort as u32, 4);
+    assert_eq!(Error::UsernameTooLong as u32, 5);
+    assert_eq!(Error::InvalidRole as u32, 6);
+    assert_eq!(Error::AlreadyOnboarded as u32, 7);
+    assert_eq!(Error::Unauthorized as u32, 8);
+    assert_eq!(Error::ProfileDeactivated as u32, 9);
+    assert_eq!(Error::ActiveEscrowsExist as u32, 10);
+    assert_eq!(Error::InvalidFee as u32, 11);
+    assert_eq!(Error::NotAnArtisan as u32, 12);
+    assert_eq!(Error::InvalidPortfolioCid as u32, 13);
+    assert_eq!(Error::CooldownActive as u32, 14);
 }
 
 /// Issue #117 — set_moderator must reject callers that are not the platform admin.

@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::{CraftNexusContract, CraftNexusContractClient, Error};
+use crate::{CraftNexusContract, CraftNexusContractClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
     token, Address, Env, Vec,
@@ -37,7 +37,6 @@ fn setup_test() -> (
 
     // Deploy token contract
     let token_id = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let token = token::Client::new(&env, &token_id.address());
     let token_addr = token_id.address();
 
     // Mint tokens to buyer
@@ -138,7 +137,7 @@ fn test_create_escrow_with_zero_window_fails() {
 
 #[test]
 fn test_admin_can_update_min_release_window() {
-    let (_, client, _, _, _, admin, _) = setup_test();
+    let (_, client, _, _, _, _admin, _) = setup_test();
 
     // Update minimum to 1 hour
     client.set_min_release_window(&ONE_HOUR);
@@ -149,7 +148,7 @@ fn test_admin_can_update_min_release_window() {
 
 #[test]
 fn test_create_escrow_after_lowering_minimum() {
-    let (_, client, buyer, seller, token_addr, admin, _) = setup_test();
+    let (_, client, buyer, seller, token_addr, _admin, _) = setup_test();
 
     // Lower minimum to 1 hour
     client.set_min_release_window(&ONE_HOUR);
@@ -169,7 +168,7 @@ fn test_create_escrow_after_lowering_minimum() {
 
 #[test]
 fn test_create_escrow_after_raising_minimum() {
-    let (_, client, buyer, seller, token_addr, admin, _) = setup_test();
+    let (_, client, buyer, seller, token_addr, _admin, _) = setup_test();
 
     // Raise minimum to 7 days
     client.set_min_release_window(&SEVEN_DAYS);
@@ -190,7 +189,7 @@ fn test_create_escrow_after_raising_minimum() {
 #[test]
 #[should_panic]
 fn test_set_min_release_window_to_zero_fails() {
-    let (_, client, _, _, _, admin, _) = setup_test();
+    let (_, client, _, _, _, _admin, _) = setup_test();
 
     // Try to set minimum to 0 (should fail)
     client.set_min_release_window(&0);
@@ -198,7 +197,7 @@ fn test_set_min_release_window_to_zero_fails() {
 
 #[test]
 fn test_set_min_release_window_cannot_exceed_max() {
-    let (_, client, _, _, _, admin, _) = setup_test();
+    let (_, client, _, _, _, _admin, _) = setup_test();
 
     // Set max to 7 days
     client.set_max_release_window(&SEVEN_DAYS);
@@ -210,7 +209,7 @@ fn test_set_min_release_window_cannot_exceed_max() {
 
 #[test]
 fn test_min_and_max_window_boundaries() {
-    let (_, client, buyer, seller, token_addr, admin, _) = setup_test();
+    let (_, client, buyer, seller, token_addr, _admin, _) = setup_test();
 
     // Set min to 1 hour and max to 7 days
     client.set_min_release_window(&ONE_HOUR);
@@ -253,7 +252,7 @@ fn test_min_and_max_window_boundaries() {
 
 #[test]
 fn test_default_window_respects_minimum() {
-    let (_, client, buyer, seller, token_addr, admin, _) = setup_test();
+    let (_, client, buyer, seller, token_addr, _admin, _) = setup_test();
 
     // Raise minimum to 14 days
     let fourteen_days = 14 * ONE_DAY;
@@ -274,7 +273,7 @@ fn test_default_window_respects_minimum() {
 
 #[test]
 fn test_prevents_flash_auto_release_attack() {
-    let (env, client, buyer, seller, token_addr, _, _) = setup_test();
+    let (_env, client, buyer, seller, token_addr, _, _) = setup_test();
 
     // Set minimum to 1 hour
     client.set_min_release_window(&ONE_HOUR);
@@ -294,7 +293,7 @@ fn test_prevents_flash_auto_release_attack() {
 
 #[test]
 fn test_multiple_escrows_with_different_windows() {
-    let (_, client, buyer, seller, token_addr, admin, _) = setup_test();
+    let (_, client, buyer, seller, token_addr, _admin, _) = setup_test();
 
     // Set min to 1 hour
     client.set_min_release_window(&ONE_HOUR);
@@ -317,7 +316,7 @@ fn test_multiple_escrows_with_different_windows() {
 
 #[test]
 fn test_min_window_persists_across_config_updates() {
-    let (_, client, _, _, _, admin, _) = setup_test();
+    let (_, client, _, _, _, _admin, _) = setup_test();
 
     // Set min window to 2 days
     let two_days = 2 * ONE_DAY;
@@ -341,7 +340,7 @@ fn test_min_window_persists_across_config_updates() {
 
 #[test]
 fn test_batch_create_respects_minimum_window() {
-    let (env, client, buyer, seller, token_addr, admin, _) = setup_test();
+    let (_env, client, buyer, seller, token_addr, _admin, _) = setup_test();
 
     // Set min to 2 days
     let two_days = 2 * ONE_DAY;
@@ -364,7 +363,7 @@ fn test_batch_create_respects_minimum_window() {
 
 #[test]
 fn test_batch_create_with_minimum_window() {
-    let (env, client, buyer, seller, token_addr, admin, _) = setup_test();
+    let (_env, client, buyer, seller, token_addr, _admin, _) = setup_test();
 
     // Create escrow with 1 hour window (default minimum is 1 day)
     let escrow = client.create_escrow(&buyer, &seller, &token_addr, &1_000_000, &1, &Some(ONE_DAY));
@@ -373,7 +372,7 @@ fn test_batch_create_with_minimum_window() {
 
 #[test]
 fn test_reasonable_minimum_windows() {
-    let (_, client, buyer, seller, token_addr, admin, _) = setup_test();
+    let (_, client, buyer, seller, token_addr, _admin, _) = setup_test();
 
     // Test various reasonable minimum windows
     let reasonable_minimums = [

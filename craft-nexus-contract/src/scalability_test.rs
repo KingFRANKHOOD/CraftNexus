@@ -2,9 +2,10 @@
 
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::Address as _,
     token, Address, Env,
 };
+use soroban_sdk::testutils::Ledger;
 
 fn setup_test() -> (
     Env,
@@ -19,6 +20,7 @@ fn setup_test() -> (
     let env = Env::default();
     env.mock_all_auths();
     env.budget().reset_unlimited();
+    caller.require_auth();
 
     let contract_id = env.register_contract(None, CraftNexusContract);
     let client = EscrowContractClient::new(&env, &contract_id);
@@ -33,7 +35,6 @@ fn setup_test() -> (
 
     // Deploy token contract
     let token_id = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let token = token::Client::new(&env, &token_id.address());
     let token_addr = token_id.address();
 
     // Mint tokens to buyer
@@ -183,7 +184,7 @@ fn test_indexed_storage_multiple_users() {
 
 #[test]
 fn test_migration_from_legacy_storage() {
-    let (env, client, buyer, seller, token, admin, _, _) = setup_test();
+    let (env, client, buyer, _seller, _token, _admin, _, _) = setup_test();
 
     // Simulate legacy storage by directly setting the old vector format
     let legacy_key = DataKey::BuyerEscrows(buyer.clone());
@@ -237,7 +238,7 @@ fn test_migration_from_legacy_storage() {
 
 #[test]
 fn test_backward_compatibility_query() {
-    let (env, client, buyer, seller, token, _, _, _) = setup_test();
+    let (env, client, buyer, _seller, _token, _, _, _) = setup_test();
 
     // Simulate legacy storage
     let legacy_key = DataKey::BuyerEscrows(buyer.clone());
@@ -342,7 +343,7 @@ fn test_no_storage_limit_with_indexed_pattern() {
 
 #[test]
 fn test_whitelisted_tokens_individual_storage() {
-    let (env, client, _, _, token1, admin, _, _) = setup_test();
+    let (env, client, _, _, token1, _, _, _) = setup_test();
     let token2 = Address::generate(&env);
     let token3 = Address::generate(&env);
 
@@ -442,7 +443,7 @@ fn test_whitelisted_tokens_scalability() {
 
 #[test]
 fn test_whitelisted_tokens_migration() {
-    let (env, client, _, _, token1, admin, _, _) = setup_test();
+    let (env, client, _, _, token1, _, _, _) = setup_test();
     let token2 = Address::generate(&env);
     let token3 = Address::generate(&env);
 
@@ -485,7 +486,7 @@ fn test_whitelisted_tokens_migration() {
 
 #[test]
 fn test_artisan_stake_queue_bounded_storage() {
-    let (env, client, buyer, artisan, token, admin, _, _) = setup_test();
+    let (env, client, _, artisan, token, _, _, _) = setup_test();
 
     // Mint tokens to artisan for staking
     let token_asset = token::StellarAssetClient::new(&env, &token);
@@ -519,7 +520,7 @@ fn test_artisan_stake_queue_bounded_storage() {
 
 #[test]
 fn test_artisan_stake_queue_pruning() {
-    let (env, client, buyer, artisan, token, admin, _, _) = setup_test();
+    let (env, client, _, artisan, token, _, _, _) = setup_test();
 
     // Mint tokens to artisan for staking
     let token_asset = token::StellarAssetClient::new(&env, &token);
@@ -548,7 +549,7 @@ fn test_artisan_stake_queue_pruning() {
 
 #[test]
 fn test_artisan_stake_queue_migration() {
-    let (env, client, buyer, artisan, token, admin, _, _) = setup_test();
+    let (env, client, _, artisan, _, _, _, _) = setup_test();
 
     // Simulate legacy storage by directly setting the old Vec format
     let legacy_key = DataKey::ArtisanStakeQueue(artisan.clone());
