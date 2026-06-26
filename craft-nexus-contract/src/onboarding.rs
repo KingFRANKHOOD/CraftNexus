@@ -441,6 +441,24 @@ fn normalize_username(env: &Env, username: &String) -> String {
     String::from_bytes(env, &normalized[..out_len])
 }
 
+/// Transliterate non-ASCII bytes to their ASCII equivalents during username normalization.
+///
+/// Internal helper used by [`normalize_username`] to map Latin-extended and Cyrillic
+/// Unicode code points to canonical ASCII forms. This enables case-insensitive username
+/// uniqueness while avoiding heap allocations for separator handling.
+///
+/// # Integration notes (Component #32 / Issue #433)
+///
+/// ## Off-chain consumers
+/// Indexers and client UIs should apply the same transliteration rules when validating
+/// usernames pre-onboarding. Characters `ä`, `é`, `ö`, `ü`, `ß`, `α`, `ο`, `е` all
+/// map to ASCII equivalents (`a`, `e`, `o`, `u`, `ss`, `a`, `o`, `e` respectively).
+///
+/// ## Guarantees
+/// - Mapping is idempotent: running it twice produces the same result.
+/// - All Unicode letters in the match table map to lowercase ASCII.
+/// - Unsupported characters fall through to `None` and are replaced with `_`
+///   by the caller (`normalize_username`).
 fn map_username_bytes(input: &[u8]) -> Option<(&'static [u8], usize)> {
     match input {
         [0xC3, 0x84, ..]
@@ -837,19 +855,21 @@ impl OnboardingContract {
     /// This prevents reentrancy where malicious callers trigger intermediate states
     /// via callbacks on arbitrary token contracts before final balance settlement.
     fn parse_verification_action(env: &Env, action: &Symbol) -> VerificationActionCode {
-        if action == &String::from_str(env, "requested") {
+        let requested = Symbol::new(env, "requested");
+        let approved = Symbol::new(env, "approved");
+        let rejected = Symbol::new(env, "rejected");
+        let auto_verified = Symbol::new(env, "auto_verified");
+        if action == &requested {
             VerificationActionCode::Requested
-        } else if action == &String::from_str(env, "approved") {
+        } else if action == &approved {
             VerificationActionCode::Approved
-        } else if action == &String::from_str(env, "rejected") {
+        } else if action == &rejected {
             VerificationActionCode::Rejected
-        } else if action == &String::from_str(env, "auto_verified") {
+        } else if action == &auto_verified {
             VerificationActionCode::AutoVerified
         } else {
             VerificationActionCode::UsernameChangedRevoked
         }
-
-        action.clone()
     }
 
     fn migrate_legacy_verification_history(env: &Env, user: &Address) {
