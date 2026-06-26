@@ -1566,6 +1566,65 @@ impl OnboardingContract {
         }
     }
 
+    /// Return the precise number of active escrow contracts tracked for `user`.
+    ///
+    /// # Enhanced business flow — feature #47
+    ///
+    /// [`OnboardingContract::has_active_contracts`] only answers the boolean
+    /// "is the user currently engaged?" question. Complex escrow and reputation
+    /// scenarios — staggered multi-order settlement, reputation weighting by
+    /// concurrent workload, and off-chain risk dashboards — need the exact
+    /// concurrency level, not just a flag. This endpoint exposes the locally
+    /// maintained `DataKey::ActiveContractCount(user)` counter so off-chain
+    /// indexers and client UIs can read it directly without replaying every
+    /// escrow event or making a cross-contract call.
+    ///
+    /// The counter is the same value maintained by
+    /// [`OnboardingContract::update_active_contracts`] (incremented when an
+    /// escrow becomes active, decremented on close). When no local entry exists
+    /// the user has no tracked active contracts and `0` is returned; this is the
+    /// canonical "not engaged" state and is consistent with
+    /// `has_active_contracts` returning `false`.
+    ///
+    /// # Authorization
+    /// - None. This is a read-only query that mutates no business state and
+    ///   therefore needs no `require_auth`; it may be called by indexers and
+    ///   clients freely. It only refreshes the TTL of entries it reads.
+    ///
+    /// # Storage side-effects
+    /// - Reads and extends TTL on `DataKey::Config`.
+    /// - Reads and (when present) extends TTL on
+    ///   `DataKey::ActiveContractCount(user)`.
+    /// - No `UserProfile` shape is touched, so no profile-version upgrade is
+    ///   required (`CURRENT_USER_PROFILE_VERSION` unaffected).
+    ///
+    /// # Arguments
+    /// * `user` - Address whose active-contract concurrency is being queried.
+    ///
+    /// # Returns
+    /// The number of currently-active contracts for `user` (`0` when none are
+    /// tracked).
+    ///
+    /// # Reverts if
+    /// - Contract not initialized.
+    pub fn get_active_contract_count(env: Env, user: Address) -> u32 {
+        let _config: OnboardingConfig = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Config)
+            .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
+        Self::extend_persistent(&env, &DataKey::Config);
+
+        let key = DataKey::ActiveContractCount(user);
+        match env.storage().persistent().get::<_, u32>(&key) {
+            Some(count) => {
+                Self::extend_persistent(&env, &key);
+                count
+            }
+            None => 0,
+        }
+    }
+
     /// Get user profile by username (case-insensitive)
     ///
     /// Normalizes the input username before looking up the owner address in

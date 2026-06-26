@@ -1685,6 +1685,65 @@ fn test_update_active_contracts_tracks_state() {
     assert!(!client.has_active_contracts(&user));
 }
 
+// ============================================================
+// Feature #47 – precise active-contract count for escrow/reputation flows
+// ============================================================
+
+/// get_active_contract_count returns 0 for a user with no tracked contracts.
+#[test]
+fn test_get_active_contract_count_defaults_to_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin) = setup_test(&env);
+    let user = Address::generate(&env);
+    client.onboard_user(&user, &String::from_str(&env, "counter0"), &UserRole::Buyer);
+
+    assert_eq!(client.get_active_contract_count(&user), 0);
+    assert!(!client.has_active_contracts(&user));
+}
+
+/// get_active_contract_count reflects each increment/decrement state transition
+/// and stays consistent with the has_active_contracts boolean.
+#[test]
+fn test_get_active_contract_count_tracks_transitions() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, admin) = setup_test(&env);
+    let user = Address::generate(&env);
+    client.onboard_user(&user, &String::from_str(&env, "counterN"), &UserRole::Buyer);
+
+    let escrow_id = env.register_contract(None, crate::CraftNexusContract);
+    let platform_wallet = Address::generate(&env);
+    let arbitrator = Address::generate(&env);
+    let escrow_client = crate::CraftNexusContractClient::new(&env, &escrow_id);
+    escrow_client.initialize(
+        &platform_wallet,
+        &admin,
+        &arbitrator,
+        &500,
+        &Some(client.address.clone()),
+    );
+    client.set_escrow_contract(&escrow_id);
+
+    // 0 -> 2: two concurrent active contracts.
+    client.update_active_contracts(&user, &1);
+    client.update_active_contracts(&user, &1);
+    assert_eq!(client.get_active_contract_count(&user), 2);
+    assert!(client.has_active_contracts(&user));
+
+    // 2 -> 1: one closes.
+    client.update_active_contracts(&user, &-1);
+    assert_eq!(client.get_active_contract_count(&user), 1);
+    assert!(client.has_active_contracts(&user));
+
+    // 1 -> 0: last one closes, entry is removed and count reads back as zero.
+    client.update_active_contracts(&user, &-1);
+    assert_eq!(client.get_active_contract_count(&user), 0);
+    assert!(!client.has_active_contracts(&user));
+}
+
 #[test]
 #[should_panic]
 fn test_update_active_contracts_underflow_panics() {
